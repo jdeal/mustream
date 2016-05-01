@@ -50,10 +50,7 @@
         "react"
       ],
       "retainLines": true
-    },
-    "require": [
-      "./test/helpers/setup-browser-env.js"
-    ]
+    }
   },
   "dependencies": {
     "invariant": "^2.0.0"
