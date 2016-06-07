@@ -49,10 +49,27 @@ test('can get a nested value of a stream', t => {
 test('can listen to changes in a nested value', t => {
   const stream = createStream();
   stream.set([], {x: 1});
-  const spy = sinon.spy();
-  stream.at('x').subscribe(spy);
+  const rootSpy = sinon.spy();
+  const xSpy = sinon.spy();
+  stream.subscribe(rootSpy);
+  stream.at('x').subscribe(xSpy);
   stream.set('y', 2);
-  t.false(spy.called);
+  t.true(rootSpy.called);
+  t.false(xSpy.called);
   stream.set('x', 2);
+  t.true(xSpy.called);
+});
+
+test('can autoSubscribe to changes', t => {
+  const stream = createStream();
+  stream.set([], {x: 1, y: 2});
+  const spy = sinon.spy();
+  stream.autoSubscribe(get => spy(get('x')));
   t.true(spy.called);
+  t.true(spy.calledWith(1));
+  stream.set('x', 2);
+  t.is(spy.callCount, 2);
+  t.true(spy.calledWith(2));
+  stream.set('y', 3);
+  t.is(spy.callCount, 2);
 });

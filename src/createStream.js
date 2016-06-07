@@ -11,6 +11,27 @@ import buildNotificationKeyPaths from './utils/buildNotificationKeyPaths';
 const isRootKeyPath = keyPath => !exists(keyPath) ||
   (Array.isArray(keyPath) && keyPath.length === 0);
 
+const normalizeSubscriptionArgs = (keyPath, handler, name = 'subscribe') => {
+  if (typeof keyPath === 'function') {
+    handler = keyPath;
+    keyPath = undefined;
+  }
+
+  invariant(typeof handler === 'function',
+    'Subscription handler should be a function.'
+  );
+
+  if (!exists(keyPath)) {
+    keyPath = [];
+  }
+
+  invariant(Array.isArray(keyPath) || typeof keyPath === 'string',
+    `${name} requires array or string for key path`
+  );
+
+  return [keyPath, handler];
+};
+
 const createChildStream = (parentStream, parentKeyPath) => {
   const get = (childKeyPath) => {
     const fullKeyPath = joinKeyPath(parentKeyPath, childKeyPath);
@@ -31,10 +52,20 @@ const createChildStream = (parentStream, parentKeyPath) => {
     return parentStream.subscribe(fullKeyPath, handler);
   };
 
+  const autoSubscribe = (childKeyPath, handler) => {
+    if (typeof childKeyPath === 'function') {
+      handler = childKeyPath;
+      childKeyPath = undefined;
+    }
+    const fullKeyPath = joinKeyPath(parentKeyPath, childKeyPath);
+    return parentStream.autoSubscribe(fullKeyPath, handler);
+  };
+
   const childStream = {
     get,
     set,
-    subscribe
+    subscribe,
+    autoSubscribe
   };
 
   childStream.at = childKeyPath => createChildStream(
@@ -84,24 +115,9 @@ const createStream = () => {
     });
   };
 
-  const subscribe = (keyPath, handler) => {
+  const subscribe = (_keyPath, _handler) => {
 
-    if (typeof keyPath === 'function') {
-      handler = keyPath;
-      keyPath = undefined;
-    }
-
-    invariant(typeof handler === 'function',
-      'Subscription handler should be a function.'
-    );
-
-    if (!exists(keyPath)) {
-      keyPath = [];
-    }
-
-    invariant(Array.isArray(keyPath) || typeof keyPath === 'string',
-      'subscribe requires array or string for key path'
-    );
+    let [keyPath, handler] = normalizeSubscriptionArgs(_keyPath, _handler);
 
     keyPath = Array.isArray(keyPath) ? keyPath : parseKeyPath(keyPath);
 
@@ -134,10 +150,44 @@ const createStream = () => {
     };
   };
 
+  const autoSubscribe = (_parentKeyPath, _doSideEffect) => {
+
+    let [parentKeyPath, doSideEffect] = normalizeSubscriptionArgs(_parentKeyPath, _doSideEffect, 'autoSubscribe');
+
+    const hotKeyPathSubscriptions = {};
+
+    const onChange = () => {
+      const newHotKeyPathSet = {};
+      const getAndTrack = (childKeyPath) => {
+        childKeyPath = Array.isArray(childKeyPath) ? childKeyPath : parseKeyPath(childKeyPath);
+        childKeyPath = stringifyKeyPath(childKeyPath);
+        const keyPath = joinKeyPath(parentKeyPath, childKeyPath);
+        newHotKeyPathSet[keyPath] = true;
+        return get(keyPath);
+      };
+      doSideEffect(getAndTrack);
+      // Subscribe to new hot keyPaths.
+      Object.keys(newHotKeyPathSet).forEach(keyPath => {
+        if (!hotKeyPathSubscriptions[keyPath]) {
+          hotKeyPathSubscriptions[keyPath] = subscribe(keyPath, onChange);
+        }
+      });
+      // Unsubscribe from now cold keyPaths.
+      Object.keys(hotKeyPathSubscriptions).forEach(keyPath => {
+        if (!newHotKeyPathSet[keyPath]) {
+          hotKeyPathSubscriptions[keyPath]();
+        }
+      });
+    };
+
+    onChange();
+  };
+
   const stream = {
     get,
     set,
-    subscribe
+    subscribe,
+    autoSubscribe
   };
 
   stream.at = keyPath => createChildStream(stream, keyPath);
