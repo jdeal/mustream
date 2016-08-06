@@ -73,3 +73,40 @@ test('can autoSubscribe to changes', t => {
   stream.set('y', 3);
   t.is(spy.callCount, 2);
 });
+
+test('can compute x + y', t => {
+  const stream = createStream({
+    sum: get => get('x') + get('y')
+  });
+  stream.set([], {x: 1, y: 2});
+  t.is(stream.get('sum'), 3);
+  stream.set('x', 2);
+  t.is(stream.get('sum'), 4);
+});
+
+test('can subscribe to computation', t => {
+  const stream = createStream({
+    sum: get => get('x') + get('y')
+  });
+  stream.set([], {x: 1, y: 2});
+  const spy = sinon.spy();
+  const unsubscribe = stream.subscribe('sum', spy);
+  t.false(spy.called);
+  stream.set('x', 2);
+  t.true(spy.calledWith(4));
+  unsubscribe();
+});
+
+test('can autoSubscribe to computation', t => {
+  const stream = createStream({
+    sum: get => get('x') + get('y')
+  });
+  stream.set([], {x: 1, y: 2});
+  const spy = sinon.spy();
+  stream.autoSubscribe(get => spy(get('sum')));
+  t.true(spy.called);
+  t.true(spy.calledWith(3));
+  stream.set('x', 2);
+  t.is(spy.callCount, 2);
+  t.true(spy.calledWith(4));
+});

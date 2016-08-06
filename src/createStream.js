@@ -32,6 +32,16 @@ const normalizeSubscriptionArgs = (keyPath, handler, name = 'subscribe') => {
   return [keyPath, handler];
 };
 
+const createTrackable = (get, parentKeyPath, hotSet) => {
+  return (childKeyPath) => {
+    childKeyPath = Array.isArray(childKeyPath) ? childKeyPath : parseKeyPath(childKeyPath);
+    childKeyPath = stringifyKeyPath(childKeyPath);
+    const keyPath = joinKeyPath(parentKeyPath, childKeyPath);
+    hotSet[keyPath] = true;
+    return get(keyPath);
+  };
+};
+
 const createChildStream = (parentStream, parentKeyPath) => {
   const get = (childKeyPath) => {
     const fullKeyPath = joinKeyPath(parentKeyPath, childKeyPath);
@@ -76,46 +86,85 @@ const createChildStream = (parentStream, parentKeyPath) => {
   return childStream;
 };
 
-const createStream = () => {
+const createStream = (_computations = {}) => {
   let currentValue = null;
+  const computedValues = {};
+  const computations = {};
 
-  const get = (keyPath) => {
-    return getAt(currentValue, keyPath);
-  };
+  Object.keys(_computations).forEach(computationKey => {
+    computations[stringifyKeyPath(computationKey)] = _computations[computationKey];
+  });
+
+  let get;
+  let subscribe;
+  let autoSubscribe;
 
   const subscribers = [];
   const subscriberPaths = [];
   const pathToSubscribers = {};
 
-  const set = (keyPath, newValue) => {
+  const hasComputation = computationPath => (
+    computationPath in computations &&
+    typeof computations[computationPath] === 'function'
+  );
 
-    invariant(Array.isArray(keyPath) || typeof keyPath === 'string',
-      'set requires array or string for key path'
-    );
+  const hasHotComputation = computationPath => (
+    // If we have a cached value, then it's hot.
+    computationPath in computedValues
+  );
 
-    if (isRootKeyPath(keyPath)) {
-      currentValue = newValue;
-    } else {
-      setAt(currentValue, keyPath, newValue);
+  // Get value or cached computed value at path.
+  const getValueAt = keyPath => {
+    const nullOrKeyPath = keyPath === '' ? null : keyPath;
+    const value = getAt(currentValue, nullOrKeyPath);
+    if (typeof value !== 'undefined') {
+      return value;
     }
+    return computedValues[keyPath];
+  };
 
+  const notifySubscribers = keyPath => {
     const notificationKeyPaths = buildNotificationKeyPaths(keyPath);
-
-    //console.log(notificationKeyPaths)
 
     notificationKeyPaths.forEach(notificationKeyPath => {
       const keyPathSubscribers = pathToSubscribers[notificationKeyPath];
-      //console.log(keyPathSubscribers);
       if (keyPathSubscribers) {
         keyPathSubscribers.forEach(subscriber => {
-          const nullOrKeyPath = keyPath === '' ? null : keyPath;
-          subscriber(getAt(currentValue, nullOrKeyPath));
+          subscriber(getValueAt(keyPath));
         });
       }
     });
   };
 
-  const subscribe = (_keyPath, _handler) => {
+  const heatUpComputation = computationPath => {
+    if (hasHotComputation(computationPath)) {
+      return;
+    }
+    const computation = computations[computationPath];
+
+    let isComputed = false;
+
+    const unsubscribe = autoSubscribe(computationGet => {
+      // First time, we're just getting the computed value and letting
+      // autoSubscribe warm up.
+      if (!isComputed) {
+        computedValues[computationPath] = computation(computationGet);
+        isComputed = true;
+        return;
+      }
+      // After that, notify subscribers if there are any. Otherwise, just drop
+      // the cache.
+      if (pathToSubscribers[computationPath]) {
+        computedValues[computationPath] = computation(computationGet);
+        notifySubscribers(computationPath);
+      } else {
+        unsubscribe();
+        delete computedValues[computationPath];
+      }
+    });
+  };
+
+  subscribe = (_keyPath, _handler) => {
 
     let [keyPath, handler] = normalizeSubscriptionArgs(_keyPath, _handler);
 
@@ -130,7 +179,12 @@ const createStream = () => {
     pathToSubscribers[keyPath] = pathToSubscribers[keyPath] || [];
     pathToSubscribers[keyPath].push(handler);
 
+    if (hasComputation(keyPath)) {
+      heatUpComputation(keyPath);
+    }
+
     return () => {
+      // Don't try to unsubscribe twice.
       if (!isSubscribed) {
         return false;
       }
@@ -150,7 +204,34 @@ const createStream = () => {
     };
   };
 
-  const autoSubscribe = (_parentKeyPath, _doSideEffect) => {
+  get = (keyPath) => {
+    const value = getAt(currentValue, keyPath);
+    if (typeof value === 'undefined') {
+      const computationPath = stringifyKeyPath(keyPath);
+      if (hasComputation(computationPath)) {
+        heatUpComputation(computationPath);
+        return computedValues[computationPath];
+      }
+    }
+    return value;
+  };
+
+  const set = (keyPath, newValue) => {
+
+    invariant(Array.isArray(keyPath) || typeof keyPath === 'string',
+      'set requires array or string for key path'
+    );
+
+    if (isRootKeyPath(keyPath)) {
+      currentValue = newValue;
+    } else {
+      setAt(currentValue, keyPath, newValue);
+    }
+
+    notifySubscribers(keyPath);
+  };
+
+  autoSubscribe = (_parentKeyPath, _doSideEffect) => {
 
     let [parentKeyPath, doSideEffect] = normalizeSubscriptionArgs(_parentKeyPath, _doSideEffect, 'autoSubscribe');
 
@@ -158,13 +239,7 @@ const createStream = () => {
 
     const onChange = () => {
       const newHotKeyPathSet = {};
-      const getAndTrack = (childKeyPath) => {
-        childKeyPath = Array.isArray(childKeyPath) ? childKeyPath : parseKeyPath(childKeyPath);
-        childKeyPath = stringifyKeyPath(childKeyPath);
-        const keyPath = joinKeyPath(parentKeyPath, childKeyPath);
-        newHotKeyPathSet[keyPath] = true;
-        return get(keyPath);
-      };
+      const getAndTrack = createTrackable(get, parentKeyPath, newHotKeyPathSet);
       doSideEffect(getAndTrack);
       // Subscribe to new hot keyPaths.
       Object.keys(newHotKeyPathSet).forEach(keyPath => {
@@ -181,6 +256,13 @@ const createStream = () => {
     };
 
     onChange();
+
+    // unsubscribe
+    return () => {
+      Object.keys(hotKeyPathSubscriptions).forEach(keyPath => {
+        hotKeyPathSubscriptions[keyPath]();
+      });
+    };
   };
 
   const stream = {
