@@ -14,8 +14,7 @@ test('root key path', t => {
 test('blank key path', t => {
   const keyPaths = buildNotificationKeyPaths('');
   t.deepEqual(keyPaths, [
-    '',
-    "['']"
+    ''
   ]);
 });
 

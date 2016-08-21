@@ -99,8 +99,6 @@ const createStream = (_computations = {}) => {
   let subscribe;
   let autoSubscribe;
 
-  const subscribers = [];
-  const subscriberPaths = [];
   const pathToSubscribers = {};
 
   const hasComputation = computationPath => (
@@ -124,10 +122,16 @@ const createStream = (_computations = {}) => {
   };
 
   const notifySubscribers = keyPath => {
-    const notificationKeyPaths = buildNotificationKeyPaths(keyPath);
+    keyPath = stringifyKeyPath(keyPath);
 
-    notificationKeyPaths.forEach(notificationKeyPath => {
-      const keyPathSubscribers = pathToSubscribers[notificationKeyPath];
+    const notificationPaths = buildNotificationKeyPaths(keyPath);
+
+    const prefixedNotificationPaths = notificationPaths
+      .map(notificationPath => `self::${notificationPath}`)
+      .concat(`children::${notificationPaths[notificationPaths.length - 1]}`);
+
+    prefixedNotificationPaths.forEach(notificationPath => {
+      const keyPathSubscribers = pathToSubscribers[notificationPath];
       if (keyPathSubscribers) {
         keyPathSubscribers.forEach(subscriber => {
           subscriber(getValueAt(keyPath));
@@ -152,9 +156,10 @@ const createStream = (_computations = {}) => {
         isComputed = true;
         return;
       }
+      const prefixedComputationPath = `self::${computationPath}`;
       // After that, notify subscribers if there are any. Otherwise, just drop
       // the cache.
-      if (pathToSubscribers[computationPath]) {
+      if (pathToSubscribers[prefixedComputationPath]) {
         computedValues[computationPath] = computation(computationGet);
         notifySubscribers(computationPath);
       } else {
@@ -172,12 +177,21 @@ const createStream = (_computations = {}) => {
 
     keyPath = stringifyKeyPath(keyPath);
 
+    const notificationPaths = buildNotificationKeyPaths(keyPath);
+
+    const prefixedNotificationPaths = notificationPaths
+      .slice(0, notificationPaths.length - 1)
+      .map(notificationPath => `children::${notificationPath}`)
+      .concat(`self::${notificationPaths[notificationPaths.length - 1]}`);
+
     let isSubscribed = true;
 
-    subscribers.push(handler);
-    subscriberPaths.push(keyPath);
-    pathToSubscribers[keyPath] = pathToSubscribers[keyPath] || [];
-    pathToSubscribers[keyPath].push(handler);
+    //subscribers.push(handler);
+    //subscriberPaths.push(keyPath);
+    prefixedNotificationPaths.forEach(notificationPath => {
+      pathToSubscribers[notificationPath] = pathToSubscribers[notificationPath] || [];
+      pathToSubscribers[notificationPath].push(handler);
+    });
 
     if (hasComputation(keyPath)) {
       heatUpComputation(keyPath);
@@ -191,14 +205,16 @@ const createStream = (_computations = {}) => {
 
       isSubscribed = false;
 
-      const index = subscribers.indexOf(handler);
-      subscribers.splice(index, 1);
-      subscriberPaths.splice(index, 1);
-      const pathIndex = pathToSubscribers[keyPath].indexOf(handler);
-      pathToSubscribers[keyPath].splice(pathIndex, 1);
-      if (pathToSubscribers[keyPath].length === 0) {
-        delete pathToSubscribers[keyPath];
-      }
+      //const index = subscribers.indexOf(handler);
+      //subscribers.splice(index, 1);
+      //subscriberPaths.splice(index, 1);
+      prefixedNotificationPaths.forEach(notificationPath => {
+        const pathIndex = pathToSubscribers[notificationPath].indexOf(handler);
+        pathToSubscribers[notificationPath].splice(pathIndex, 1);
+        if (pathToSubscribers[notificationPath].length === 0) {
+          delete pathToSubscribers[notificationPath];
+        }
+      });
 
       return undefined;
     };

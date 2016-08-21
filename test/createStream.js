@@ -110,3 +110,12 @@ test('can autoSubscribe to computation', t => {
   t.is(spy.callCount, 2);
   t.true(spy.calledWith(4));
 });
+
+test('changing parent will notify child', t => {
+  const stream = createStream();
+  stream.set([], {parent: {child: 1}});
+  const spy = sinon.spy();
+  stream.subscribe(['parent', 'child'], spy);
+  stream.set('parent', {child: 2});
+  t.true(spy.called);
+});
