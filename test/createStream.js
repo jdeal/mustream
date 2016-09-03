@@ -95,6 +95,8 @@ test('can subscribe to computation', t => {
   stream.set('x', 2);
   t.true(spy.calledWith(4));
   unsubscribe();
+  stream.set('y', 3);
+  t.is(spy.callCount, 1);
 });
 
 test('can autoSubscribe to computation', t => {
