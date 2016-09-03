@@ -1,6 +1,6 @@
 {
   "name": "mustream",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Observable data with automatic micro-subscriptions.",
   "main": "lib/index.js",
   "scripts": {
